@@ -1,0 +1,231 @@
+<html>
+   <head>
+      <title>WebGL Experiment</title>
+      <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+         
+      <script src="js/J3DIMath.js" type="text/javascript"> </script> 
+      
+      <script id="fragmentShader" type="x-shader/x-fragment">
+         #ifdef GL_ES
+         precision highp float;
+         #endif
+
+         void main(void) {
+            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+         }
+      </script>
+
+      <script id="vertexShader" type="x-shader/x-vertex">
+         uniform mat4 modelviewMatrix;
+         uniform mat4 projectionMatrix;
+
+         attribute vec3 position;
+
+         void main() {
+            gl_Position = projectionMatrix * modelviewMatrix * vec4( position, 1.0 );
+         }
+      </script>
+
+      <script type="text/javascript">
+
+         /* Globals. */
+         var vertexBuf;
+
+         /* <assert_code> */
+         function AssertException(message) { 
+            this.message = message; 
+         }
+         AssertException.prototype.toString = function () {
+           return 'AssertException: ' + this.message;
+         }
+         /* Assert function. */
+         function assert(exp, message) {
+           if (!exp) {
+             throw new AssertException(message);
+           }
+         }
+         /* </assert_code> */
+
+         /* Introspection code. */
+         /* list properties of a specified object.
+          * \return a string
+          */
+         function listProperties(o) {
+            var propList = "";
+            for(var propName in o) {
+               if(typeof(o[propName]) != "undefined") {
+                  propList += (propName + ":" + o[propName] + ", ");
+               }
+            }
+            return propList;
+         }
+
+         /* Load a shader.
+          * \param shaderId: id of a <script> element containing the shader source string.
+          * \return the WebGLShader object corresponding to it.
+          */
+         function loadShader(ctx, shaderId) {
+             var shaderScript = document.getElementById(shaderId);
+             if (!shaderScript) {
+                 ctx.console.log("Error: shader script '"+shaderId+"' not found");
+                 return null;
+             }
+
+             if (shaderScript.type == "x-shader/x-vertex")
+                 var shaderType = ctx.VERTEX_SHADER;
+             else if (shaderScript.type == "x-shader/x-fragment")
+                 var shaderType = ctx.FRAGMENT_SHADER;
+             else {
+                 ctx.console.log("Error: shader script '"+shaderId+"' of undefined type '"+shaderScript.type+"'");
+                 return null;
+             }
+
+             // Create the shader object
+             var shader = ctx.createShader(shaderType);
+             if (!shader) {
+                 ctx.console.log("Error: unable to create shader '"+shaderId+"'");
+                 return null;
+             }
+
+             // Load the shader source
+             ctx.shaderSource(shader, shaderScript.text);
+
+             // Compile the shader
+             ctx.compileShader(shader);
+
+             // Check the compile status
+             var compiled = ctx.getShaderParameter(shader, ctx.COMPILE_STATUS);
+             if (!compiled) {
+                 // Something went wrong during compilation, get and display the error.
+                 var error = ctx.getShaderInfoLog(shader);
+                 ctx.console.log("Error compiling shader '"+shaderId+"':"+error);
+                 ctx.deleteShader(shader);
+                 return null;
+             }
+
+             return shader;
+         }
+
+         function initGL(canvasName, vertShader, fragShader, attribs, clearColor, clearDepth) {
+            var canvas = document.getElementById(canvasName);
+            
+            try {
+               var ctx = canvas.getContext("experimental-webgl");
+               ctx.viewportWidth = canvas.width;
+               ctx.viewportHeight = canvas.height;
+            } catch(e) {
+               // If there is a problem initializing webgl, we want only one error popup.
+               //alert(e);
+               //return null;
+            }
+            assert(ctx, "Could not initialise WebGL :-(");
+
+            // Add a console
+            ctx.console = ("console" in window) ? window.console : { log: function(str) { alert(str); } };
+            
+            var vertexShader = loadShader(ctx, vertShader);
+            var fragmentShader = loadShader(ctx, fragShader);
+            assert(vertexShader && fragmentShader, "Problem loading shaders.");
+
+            ctx.program = ctx.createProgram();
+            assert(ctx.program, "Problem creating program."); 
+            ctx.attachShader(ctx.program, vertexShader);
+            ctx.attachShader(ctx.program, fragmentShader);
+
+            for (var i in attribs) {
+               ctx.bindAttribLocation(ctx.program, i, attribs[i]);
+            }
+            ctx.linkProgram(ctx.program);
+            // Check link status.
+            var linked = ctx.getProgramParameter(ctx.program, ctx.LINK_STATUS);
+            if (!linked) {
+               // Something went wrong.
+               var error = ctx.getProgramInfoLog(ctx.program);
+               ctx.console.log("Error in program linking: "+error);
+               ctx.deleteProgram(ctx.program);
+               ctx.deleteProgram(fragmentShader);
+               ctx.deleteProgram(vertexShader);
+               return null;
+            }            
+
+            ctx.useProgram(ctx.program);
+
+            ctx.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+            ctx.clearDepth(clearDepth);
+
+            ctx.enable(ctx.DEPTH_TEST);
+            ctx.enable(ctx.BLEND);
+            ctx.blendFunc(ctx.SRC_ALPHA, ctx.ONE_MINUS_SRC_ALPHA);
+            return ctx;
+         }
+
+         /* Resize function. */
+         function resize(ctx) {
+            var canvas = ctx.canvas;
+            if (canvas.width == ctx.appWidth && canvas.height == ctx.appHeight) {
+               return;
+            }
+
+            ctx.appWidth = canvas.width;
+            ctx.appHeight = canvas.height;
+
+            ctx.viewport(0, 0, ctx.appWidth, ctx.appHeight);
+
+            ctx.perspectiveMatrix = new J3DIMatrix4();
+            ctx.perspectiveMatrix.perspective(30, ctx.appWidth/ctx.appHeight, 1, 10000);
+            ctx.perspectiveMatrix.lookat(
+               0, 0, 6,
+               0, 0, 0,
+               0, 1, 0
+            );
+         }
+
+         /* Render function. */
+         function render(ctx) {
+            ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
+            
+            /*
+            ctx.bindBuffer(ctx.ARRAY_BUFFER, vertexBuf);
+            ctx.vertexAttribPointer(ctx.program.positionAttribute, vertexBuf.itemSize, ctx.FLOAT, false, 0, 0); 
+            // matrix uniforms.
+            ctx.uniformMatrix4fv(ctx.program.modelviewMatrixUniform, false, ...);
+            ctx.drawArrays(ctx.TRIANGLES, 0, vertexBuf.numItems);
+            */
+         }
+ 
+         /* Start function. */
+         function start() {
+            var ctx = initGL("canvas3d", "vertexShader", "fragmentShader", ["position"], [0,0,0,1], 10000);
+            
+            ctx.appWidth = -1;
+            ctx.appHeight = -1;
+
+            resize(ctx);
+                      
+            //ctx.console.log("hello");
+            //ctx.console.log( listProperties(ctx) );
+            //ctx.console.log( listProperties(ctx.canvas) );
+
+            vertexBuf = ctx.createBuffer();
+            ctx.bindBuffer(ctx.ARRAY_BUFFER, vertexBuf);
+            var vertices = [
+               0.0, 1.0, 0.0,
+               -1.0, -1.0, 0.0,
+               1.0, -1.0, 0.0
+            ];
+            ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(vertices), ctx.STATIC_DRAW);
+            vertexBuf.itemSize = 3;
+            vertexBuf.numSize = 3;
+
+            var renderFunc = function() { render(ctx) };
+            // Render at 50Hz 
+            setInterval(renderFunc, 20);
+         }
+         
+      </script>
+   </head>
+   <body onload="start();">
+      <div>Hello!</div>
+      <canvas id="canvas3d" style="border: none;" width="500" height="500"></canvas>
+   </body>
+</html>
